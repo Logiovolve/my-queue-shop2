@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>デジタル整理券</title>
+  <!-- LIFF SDK -->
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f7; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
+    .card { background: #fff; border-radius: 16px; padding: 32px 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); text-align: center; width: 100%; max-width: 400px; }
+    h1 { margin-top: 0; font-size: 22px; color: #1d1d1f; }
+    p { color: #86868b; font-size: 14px; line-height: 1.5; }
+    .btn { background-color: #06C755; color: white; border: none; padding: 16px 24px; font-size: 18px; font-weight: bold; border-radius: 30px; cursor: pointer; width: 100%; margin-top: 20px; transition: background-color 0.2s; }
+    .btn:disabled { background-color: #e5e5ea; color: #8e8e93; cursor: not-allowed; }
+    .status { margin-top: 20px; font-size: 13px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>順番整理券を発行</h1>
+    <p>ご来店ありがとうございます。<br>下のボタンを押して整理券をお受け取りください。</p>
+
+    <button id="issue-btn" class="btn" onclick="issueTicket()" disabled>LINE確認中...</button>
+    <div id="status-msg" class="status"></div>
+  </div>
+
+  <script>
+    // 💡 スクリーンショットの情報をそのまま設定済み
+    const firebaseConfig = {
+      apiKey: "AIzaSyAtWL5QTMOKHUZfb9MZoAt4NtBue2SNd7E",
+      authDomain: "qr-customer-call.firebaseapp.com",
+      projectId: "qr-customer-call",
+      storageBucket: "qr-customer-call.firebasestorage.app",
+      messagingSenderId: "809125472107",
+      appId: "1:809125472107:web:f25fd8367ab69728bc8a7e",
+      measurementId: "G-VT8ZHEXYMX"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const MY_LIFF_ID = "2011502822-9gjbFKnE";
+    let lineUserId = null;
+
+    // URLのパラメータから shopId (例: shop1) を取得（デフォルトは shop1）
+    const urlParams = new URLSearchParams(window.location.search);
+    const shopId = urlParams.get('shop') || 'shop1';
+
+    function setStatus(msg, color) {
+      const el = document.getElementById('status-msg');
+      el.innerText = msg;
+      el.style.color = color || '#86868b';
+    }
+
+    async function initLiff() {
+      try {
+        await liff.init({ liffId: MY_LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        lineUserId = profile.userId;
+
+        const btn = document.getElementById('issue-btn');
+        btn.disabled = false;
+        btn.innerText = "整理券を発行する";
+        setStatus("✅ LINE連携完了", "#06C755");
+
+      } catch (err) {
+        console.error("LIFF Init Error:", err);
+        setStatus("⚠️ LIFF連携エラー（普通に発券できます）", "#ff9500");
+        const btn = document.getElementById('issue-btn');
+        btn.disabled = false;
+        btn.innerText = "整理券を発行する";
+      }
+    }
+
+    // Firebaseへ直接発券データを送信
+    async function issueTicket() {
+      const btn = document.getElementById('issue-btn');
+      btn.disabled = true;
+      btn.innerText = "発行中...";
+
+      const ref = db.collection('queueShops').doc(shopId);
+
+      try {
+        let newMaxNumber = 0;
+
+        await db.runTransaction(async (transaction) => {
+          const doc = await transaction.get(ref);
+          if (!doc.exists) {
+            const initialUserIds = {};
+            if (lineUserId) initialUserIds[1] = lineUserId;
+            transaction.set(ref, { name: '店舗', current: 0, max: 1, skips: [], userIds: initialUserIds });
+            newMaxNumber = 1;
+          } else {
+            const data = doc.data();
+            newMaxNumber = (data.max || 0) + 1;
+            
+            const userIds = data.userIds || {};
+            if (lineUserId) {
+              userIds[newMaxNumber] = lineUserId;
+            }
+
+            transaction.update(ref, {
+              max: newMaxNumber,
+              userIds: userIds
+            });
+          }
+        });
+
+        alert(`整理券番号【 ${newMaxNumber} 番 】を発行しました！`);
+        setStatus(`あなたの番号: ${newMaxNumber} 番`, "#1d1d1f");
+        btn.innerText = "発行完了";
+
+      } catch (err) {
+        console.error("Issue Error:", err);
+        alert("発券処理でエラーが発生しました: " + err.message);
+        btn.disabled = false;
+        btn.innerText = "整理券を発行する";
+      }
+    }
+
+    window.onload = initLiff;
+  </script>
+</body>
+</html>
